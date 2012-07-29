@@ -164,9 +164,12 @@ module Log4r
 
     # Substitues any #{foo} in the YAML with Parameter['foo']
     def self.paramsub(str)
-      @@params.each {|param, value|
-        str = str.sub("\#{#{param}}", value)
-      }
+      @@params.each do |param, value|
+        if str.include?(param)
+          str = str.sub("\#{#{param}}", value) if value.kind_of?(String)
+          str = value unless value.kind_of?(String)
+        end
+      end
       str
     end
 
