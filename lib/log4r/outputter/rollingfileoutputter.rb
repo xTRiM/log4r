@@ -137,6 +137,7 @@ module Log4r
       padded_seq_no = "0" * (6 - @current_sequence_number.to_s.length) + @current_sequence_number.to_s
       newbase = "#{@core_file_name}#{padded_seq_no}#{@file_extension}"
       @filename = File.join(@log_dir, newbase)
+      @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
     end 
 
     # Open @filename with the given mode:
@@ -148,14 +149,14 @@ module Log4r
       # File.ctime can return the erstwhile creation time. File.size? can similarly return
       # old information. So instead of simply doing ctime and size checks after File.new, we 
       # do slightly more complicated checks beforehand:
-      if (mode == 'w' || !File.exists?(@filename))
+      if (mode == 'w' || !File.exists?(@real_log_filename))
         @start_time = Time.now()
         @datasize = 0
       else
-        @start_time = File.ctime(@filename)
-        @datasize = File.size?(@filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
+        @start_time = File.ctime(@real_log_filename)
+        @datasize = File.size?(@real_log_filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
       end
-      @out = File.new(@filename, mode)
+      @out = File.new(@real_log_filename, mode)
       Logger.log_internal {"File #{@filename} opened with mode #{mode}"}
     end
 
@@ -184,7 +185,7 @@ module Log4r
         #end
       rescue 
         Logger.log_internal {
-          "RollingFileOutputter '#{@name}' could not close #{@filename}"
+          "RollingFileOutputter '#{@name}' could not close #{@real_log_filename}"
         }
       end
 
@@ -193,6 +194,7 @@ module Log4r
       if (@max_backups != 0)
         @current_sequence_number += 1
         makeNewFilename
+        File.rename @real_log_filename, @filename rescue nil
       end
       
       open_log_file('w')
