@@ -69,7 +69,7 @@ module Log4r
       @log_dir = File.dirname(@filename)
       @file_extension = File.extname(@filename)   # Note: the File API doc comment states that this doesn't include the period, but its examples and behavior do include it. We'll depend on the latter.
       @core_file_name = File.basename(@filename, @file_extension)
-      if (@trunc or get_current_sequence_number() > @max_backups.to_i) # clean prior configurations
+      if (@trunc or (@max_backups > 0 and get_current_sequence_number() > @max_backups.to_i)) # clean prior configurations
         purge_log_files(0)
       end
       @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
@@ -135,7 +135,7 @@ module Log4r
     # and assigns it to @filename
     def makeNewFilename
       # limit file number to max_backups range
-      if @max_backups.to_i > 0 and @current_sequence_number >= @max_backups.to_i
+      if @max_backups > 0 and @current_sequence_number >= @max_backups
         @current_sequence_number = 0
       end
       
@@ -162,7 +162,7 @@ module Log4r
         @datasize = File.size?(@real_log_filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
       end
       @out = File.new(@real_log_filename, mode)
-      Logger.log_internal {"File #{@filename} opened with mode #{mode}"}
+      Logger.log_internal {"File #{@real_log_filename} opened with mode #{mode}"}
     end
 
     # does the file require a roll?
@@ -188,10 +188,15 @@ module Log4r
         #if ( @baseFilename != @filename ) then
           @out.close
         #end
+          
+          # make way for the rename        
+          if File.exists?(@filename)  
+            File.delete(@filename)
+          end
           File.rename(@real_log_filename, @filename)
       rescue 
         Logger.log_internal {
-          "RollingFileOutputter '#{@name}' could not close #{@real_log_filename}"
+          "RollingFileOutputter '#{@name}' could not close #{@real_log_filename} message=#{$!.message}"
         }
       end
 
