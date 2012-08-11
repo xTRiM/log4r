@@ -111,11 +111,14 @@ module Log4r
 	# Get the highest existing log file sequence number, or 1 if there are no existing log files.
     def get_current_sequence_number()
       max_seq_no = 0
+      highest_time = 0
       Dir.foreach(@log_dir) do |child|
         if child =~ /^#{@core_file_name}(\d+)#{@file_extension}$/
           seq_no = $1.to_i
-          if (seq_no > max_seq_no)
+          this_time = File.mtime(child).to_i
+          if (seq_no > max_seq_no and this_time > highest_time)
             max_seq_no = seq_no
+            highest_time = this_time
           end
         end
       end
