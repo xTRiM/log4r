@@ -72,6 +72,7 @@ module Log4r
       if (@trunc)
         purge_log_files(0)
       end
+      @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
       @current_sequence_number = get_current_sequence_number()
       makeNewFilename
       # Now @filename points to a properly sequenced filename, which may or may not yet exist.
@@ -136,8 +137,7 @@ module Log4r
       # note use of hard coded 6 digit sequence width - is this enough files?
       padded_seq_no = "0" * (6 - @current_sequence_number.to_s.length) + @current_sequence_number.to_s
       newbase = "#{@core_file_name}#{padded_seq_no}#{@file_extension}"
-      @filename = File.join(@log_dir, newbase)
-      @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
+      @filename = File.join(@log_dir, newbase)      
     end 
 
     # Open @filename with the given mode:
@@ -163,11 +163,11 @@ module Log4r
     # does the file require a roll?
     def requiresRoll
       if !@maxsize.nil? && @datasize > @maxsize
-        Logger.log_internal { "Rolling because #{@filename} (#{@datasize} bytes) has exceded the maxsize limit (#{@maxsize} bytes)." }
+        Logger.log_internal { "Rolling because #{@real_log_filename} (#{@datasize} bytes) has exceded the maxsize limit (#{@maxsize} bytes)." }
         return true
       end
       if !@maxtime.nil? && (Time.now - @start_time) > @maxtime
-        Logger.log_internal { "Rolling because #{@filename} (created: #{@start_time}) has exceded the maxtime age (#{@maxtime} seconds)." }
+        Logger.log_internal { "Rolling because #{@real_log_filename} (created: #{@start_time}) has exceded the maxtime age (#{@maxtime} seconds)." }
         return true
       end
       false
@@ -183,6 +183,7 @@ module Log4r
         #if ( @baseFilename != @filename ) then
           @out.close
         #end
+          File.rename(@real_log_filename, @filename)
       rescue 
         Logger.log_internal {
           "RollingFileOutputter '#{@name}' could not close #{@real_log_filename}"
@@ -194,7 +195,6 @@ module Log4r
       if (@max_backups != 0)
         @current_sequence_number += 1
         makeNewFilename
-        File.rename @real_log_filename, @filename rescue nil
       end
       
       open_log_file('w')
