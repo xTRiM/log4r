@@ -69,7 +69,7 @@ module Log4r
       @log_dir = File.dirname(@filename)
       @file_extension = File.extname(@filename)   # Note: the File API doc comment states that this doesn't include the period, but its examples and behavior do include it. We'll depend on the latter.
       @core_file_name = File.basename(@filename, @file_extension)
-      if (@trunc)
+      if (@trunc or get_current_sequence_number() > @max_backups.to_i) # clean prior configurations
         purge_log_files(0)
       end
       @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
@@ -134,7 +134,12 @@ module Log4r
     # Constructs a new filename from the @current_sequence_number, @core_file_name, and @file_extension,
     # and assigns it to @filename
     def makeNewFilename
-      # note use of hard coded 6 digit sequence width - is this enough files?
+      # limit file number to max_backups range
+      if @max_backups.to_i > 0 and @current_sequence_number >= @max_backups.to_i
+        @current_sequence_number = 0
+      end
+      
+      # note use of hard coded 6 digit sequence width - is this enough files?      
       padded_seq_no = "0" * (6 - @current_sequence_number.to_s.length) + @current_sequence_number.to_s
       newbase = "#{@core_file_name}#{padded_seq_no}#{@file_extension}"
       @filename = File.join(@log_dir, newbase)      
