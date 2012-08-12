@@ -70,10 +70,13 @@ module Log4r
       @file_extension = File.extname(@filename)   # Note: the File API doc comment states that this doesn't include the period, but its examples and behavior do include it. We'll depend on the latter.
       @core_file_name = File.basename(@filename, @file_extension)
       @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
-      if (@trunc or (@max_backups > 0 and get_current_sequence_number() > @max_backups)) # clean prior configurations
+      
+      # clean prior configurations
+      if (@trunc or (@max_backups > 0 and get_current_sequence_number() > @max_backups)) 
         purge_log_files(0)
       end      
-      @current_sequence_number = get_current_sequence_number()
+      
+      @current_sequence_number = get_current_sequence_number() + 1
       makeNewFilename
       # Now @filename points to a properly sequenced filename, which may or may not yet exist.
       open_log_file('a')
@@ -192,11 +195,10 @@ module Log4r
           @out.close
         #end
           
-          # make way for the rename        
-          if File.exists?(@filename)  
-            File.delete(@filename)
-          end
-          File.rename(@real_log_filename, @filename)
+          # make way for the rename                    
+          File.delete(@filename) if File.exists?(@filename)
+          # archive last logfile
+          File.rename(@real_log_filename, @filename) if File.exists?(@real_log_filename)
       rescue 
         Logger.log_internal {
           "RollingFileOutputter '#{@name}' could not close #{@real_log_filename} message=#{$!.message}"
