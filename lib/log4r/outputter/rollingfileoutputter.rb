@@ -79,6 +79,7 @@ module Log4r
       @current_sequence_number = get_current_sequence_number() + 1
       makeNewFilename
       # Now @filename points to a properly sequenced filename, which may or may not yet exist.
+      
       open_log_file('a')
       
       # Note: it's possible we're already in excess of our time or size constraint for the current file;
@@ -118,7 +119,7 @@ module Log4r
       Dir.foreach(@log_dir) do |child|
         if child =~ /^#{@core_file_name}(\d+)#{@file_extension}$/
           seq_no = $1.to_i
-          this_time = File.mtime(child).to_i
+          this_time = File.mtime("#{@log_dir}/#{child}").to_i
           if (seq_no > max_seq_no and this_time > highest_time)
             max_seq_no = seq_no
             highest_time = this_time
