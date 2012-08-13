@@ -26,9 +26,13 @@ module Log4r
   # [<tt>:trunc</tt>]  If true, deletes ALL existing log files (based on :filename) upon initialization,
   #     and the sequence numbering will start over at 000001. Otherwise continues logging where it left off
   #     last time (i.e. either to the file with the highest sequence number, or a new file, as appropriate).
+  # [<tt>:log4r_rolling_policy</tt>]  If true, uses the current sequenced number logfile for output: this is the default.
+  #    If false, uses the base logfile name as the only active logfile.  When roll is indicated the current logfile is
+  #    renamed to the next sequenced archive name, and the original logfile is recreated to continue logging. max_backups
+  #    limits the total number of archived files, and seqence number are reused starting at 0.
   class RollingFileOutputter < FileOutputter
 
-    attr_reader :current_sequence_number, :maxsize, :maxtime, :start_time, :max_backups
+    attr_reader :current_sequence_number, :maxsize, :maxtime, :start_time, :max_backups, :log4r_rolling_policy
 
     def initialize(_name, hash={})
       super( _name, hash.merge({:create => false}) )
@@ -61,6 +65,15 @@ module Log4r
       else
         @max_backups = -1
       end
+      if hash.has_key?(:log4r_rolling_policy) || hash.has_key?('log4r_rolling_policy') 
+        _log4r_rolling_policy = (hash[:log4r_rolling_policy] or hash['log4r_rolling_policy'])
+        if !(_log4r_rolling_policy.instance_of?(FalseClass) or _log4r_rolling_policy.instance_of?(TrueClass))
+          raise TypeError, "Argument 'log4r_rolling_policy' must be a boolean", caller
+        end
+        @log4r_rolling_policy = _log4r_rolling_policy
+      else
+        @log4r_rolling_policy = true
+      end
       # @filename starts out as the file (including path) provided by the user, e.g. "\usr\logs\error.log".
       #   It will get assigned the current log file (including sequence number)   
       # @log_dir is the directory in which we'll log, e.g. "\usr\logs"
@@ -76,7 +89,8 @@ module Log4r
         purge_log_files(0)
       end      
       
-      @current_sequence_number = get_current_sequence_number() + 1
+      @current_sequence_number = get_current_sequence_number()
+      @current_sequence_number += 1 unless @log4r_rolling_policy
       makeNewFilename
       # Now @filename points to a properly sequenced filename, which may or may not yet exist.
       
@@ -142,14 +156,16 @@ module Log4r
     # and assigns it to @filename
     def makeNewFilename
       # limit file number to max_backups range
-      if @max_backups > 0 and @current_sequence_number >= @max_backups
+      if @max_backups > 0 and @current_sequence_number >= @max_backups and not @log4r_rolling_policy
         @current_sequence_number = 0
       end
       
       # note use of hard coded 6 digit sequence width - is this enough files?      
       padded_seq_no = "0" * (6 - @current_sequence_number.to_s.length) + @current_sequence_number.to_s
       newbase = "#{@core_file_name}#{padded_seq_no}#{@file_extension}"
+      
       @filename = File.join(@log_dir, newbase)      
+      @real_log_filename = File.join(@log_dir, newbase) if @log4r_rolling_policy
     end 
 
     # Open @filename with the given mode:
@@ -168,7 +184,8 @@ module Log4r
         @start_time = File.ctime(@real_log_filename)
         @datasize = File.size?(@real_log_filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
       end
-      @out = File.new(@real_log_filename, mode)
+      @out = File.new(@real_log_filename, mode) 
+      
       Logger.log_internal {"File #{@real_log_filename} opened with mode #{mode}"}
     end
 
@@ -196,10 +213,12 @@ module Log4r
           @out.close
         #end
           
-          # make way for the rename                    
-          File.delete(@filename) if File.exists?(@filename)
-          # archive last logfile
-          File.rename(@real_log_filename, @filename) if File.exists?(@real_log_filename)
+          unless @log4r_rolling_policy                             
+            # make way for the rename  
+            File.delete(@filename) if File.exists?(@filename)
+            # archive last logfile
+            File.rename(@real_log_filename, @filename) if File.exists?(@real_log_filename)
+          end
       rescue 
         Logger.log_internal {
           "RollingFileOutputter '#{@name}' could not close #{@real_log_filename} message=#{$!.message}"
@@ -231,9 +250,12 @@ if __FILE__ == $0
   require 'log4r'
   include Log4r
 
+  dLog = Logger.new 'log4r'
+  dLog.outputters = StdoutOutputter.new("log4r")
+  dLog.level = DEBUG
 
   timeLog = Logger.new 'WbExplorer'
-  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "TestTime.log", "maxtime" => 10, "trunc" => true })
+  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestTime.log", "maxtime" => 10, "trunc" => true })
   timeLog.level = DEBUG
 
   100.times { |t|
@@ -241,12 +263,30 @@ if __FILE__ == $0
     sleep(1.0)
   }
 
+  timeLog = Logger.new 'WbExplorer'
+  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestRolling.log", "maxtime" => 10, "trunc" => true, "max_backups" => 9, "log4r_rolling_policy" => false })
+  timeLog.level = DEBUG
+
+  100.times { |t|
+    timeLog.info "rolling  #{t}"
+    sleep(1.0)
+  }
+
   sizeLog = Logger.new 'WbExplorer'
-  sizeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "TestSize.log", "maxsize" => 16000, "trunc" => true })
+  sizeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestSize.log", "maxsize" => 16000, "trunc" => true })
   sizeLog.level = DEBUG
 
-  10000.times { |t|
+  1000.times { |t|
     sizeLog.info "blah #{t}"
   }
+
+  rollLog = Logger.new 'WbExplorer'
+  rollLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestRoll.log", "maxsize" => 1024, "trunc" => true, "max_backups" => 9, "log4r_rolling_policy" => false })
+  rollLog.level = DEBUG
+
+  1000.times { |t|
+    rollLog.info "rolling #{t}"
+  }
+
 
 end
