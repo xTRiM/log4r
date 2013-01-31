@@ -26,9 +26,13 @@ module Log4r
   # [<tt>:trunc</tt>]  If true, deletes ALL existing log files (based on :filename) upon initialization,
   #     and the sequence numbering will start over at 000001. Otherwise continues logging where it left off
   #     last time (i.e. either to the file with the highest sequence number, or a new file, as appropriate).
+  # [<tt>:log4r_rolling_policy</tt>]  If true, uses the current sequenced number logfile for output: this is the default.
+  #    If false, uses the base logfile name as the only active logfile.  When roll is indicated the current logfile is
+  #    renamed to the next sequenced archive name, and the original logfile is recreated to continue logging. max_backups
+  #    limits the total number of archived files, and seqence number are reused starting at 0.
   class RollingFileOutputter < FileOutputter
 
-    attr_reader :current_sequence_number, :maxsize, :maxtime, :start_time, :max_backups
+    attr_reader :current_sequence_number, :maxsize, :maxtime, :start_time, :max_backups, :log4r_rolling_policy
 
     def initialize(_name, hash={})
       super( _name, hash.merge({:create => false}) )
@@ -61,6 +65,15 @@ module Log4r
       else
         @max_backups = -1
       end
+      if hash.has_key?(:log4r_rolling_policy) || hash.has_key?('log4r_rolling_policy') 
+        _log4r_rolling_policy = (hash[:log4r_rolling_policy] or hash['log4r_rolling_policy'])
+        if !(_log4r_rolling_policy.instance_of?(FalseClass) or _log4r_rolling_policy.instance_of?(TrueClass))
+          raise TypeError, "Argument 'log4r_rolling_policy' must be a boolean", caller
+        end
+        @log4r_rolling_policy = _log4r_rolling_policy
+      else
+        @log4r_rolling_policy = true
+      end
       # @filename starts out as the file (including path) provided by the user, e.g. "\usr\logs\error.log".
       #   It will get assigned the current log file (including sequence number)   
       # @log_dir is the directory in which we'll log, e.g. "\usr\logs"
@@ -69,12 +82,18 @@ module Log4r
       @log_dir = File.dirname(@filename)
       @file_extension = File.extname(@filename)   # Note: the File API doc comment states that this doesn't include the period, but its examples and behavior do include it. We'll depend on the latter.
       @core_file_name = File.basename(@filename, @file_extension)
-      if (@trunc)
+      @real_log_filename = File.join(@log_dir, "#{@core_file_name}#{@file_extension}")
+      
+      # clean prior configurations
+      if (@trunc or (@max_backups > 0 and get_current_sequence_number() > @max_backups)) 
         purge_log_files(0)
-      end
+      end      
+      
       @current_sequence_number = get_current_sequence_number()
+      @current_sequence_number += 1 unless @log4r_rolling_policy
       makeNewFilename
       # Now @filename points to a properly sequenced filename, which may or may not yet exist.
+      
       open_log_file('a')
       
       # Note: it's possible we're already in excess of our time or size constraint for the current file;
@@ -110,11 +129,14 @@ module Log4r
 	# Get the highest existing log file sequence number, or 1 if there are no existing log files.
     def get_current_sequence_number()
       max_seq_no = 0
+      highest_time = 0
       Dir.foreach(@log_dir) do |child|
         if child =~ /^#{@core_file_name}(\d+)#{@file_extension}$/
           seq_no = $1.to_i
-          if (seq_no > max_seq_no)
+          this_time = File.mtime("#{@log_dir}/#{child}").to_i
+          if (seq_no > max_seq_no and this_time > highest_time)
             max_seq_no = seq_no
+            highest_time = this_time
           end
         end
       end
@@ -133,10 +155,17 @@ module Log4r
     # Constructs a new filename from the @current_sequence_number, @core_file_name, and @file_extension,
     # and assigns it to @filename
     def makeNewFilename
-      # note use of hard coded 6 digit sequence width - is this enough files?
+      # limit file number to max_backups range
+      if @max_backups > 0 and @current_sequence_number >= @max_backups and not @log4r_rolling_policy
+        @current_sequence_number = 0
+      end
+      
+      # note use of hard coded 6 digit sequence width - is this enough files?      
       padded_seq_no = "0" * (6 - @current_sequence_number.to_s.length) + @current_sequence_number.to_s
       newbase = "#{@core_file_name}#{padded_seq_no}#{@file_extension}"
-      @filename = File.join(@log_dir, newbase)
+      
+      @filename = File.join(@log_dir, newbase)      
+      @real_log_filename = File.join(@log_dir, newbase) if @log4r_rolling_policy
     end 
 
     # Open @filename with the given mode:
@@ -148,25 +177,26 @@ module Log4r
       # File.ctime can return the erstwhile creation time. File.size? can similarly return
       # old information. So instead of simply doing ctime and size checks after File.new, we 
       # do slightly more complicated checks beforehand:
-      if (mode == 'w' || !File.exists?(@filename))
+      if (mode == 'w' || !File.exists?(@real_log_filename))
         @start_time = Time.now()
         @datasize = 0
       else
-        @start_time = File.ctime(@filename)
-        @datasize = File.size?(@filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
+        @start_time = File.ctime(@real_log_filename)
+        @datasize = File.size?(@real_log_filename) || 0 # File.size? returns nil even if the file exists but is empty; we convert it to 0.
       end
-      @out = File.new(@filename, mode)
-      Logger.log_internal {"File #{@filename} opened with mode #{mode}"}
+      @out = File.new(@real_log_filename, mode) 
+      
+      Logger.log_internal {"File #{@real_log_filename} opened with mode #{mode}"}
     end
 
     # does the file require a roll?
     def requiresRoll
       if !@maxsize.nil? && @datasize > @maxsize
-        Logger.log_internal { "Rolling because #{@filename} (#{@datasize} bytes) has exceded the maxsize limit (#{@maxsize} bytes)." }
+        Logger.log_internal { "Rolling because #{@real_log_filename} (#{@datasize} bytes) has exceded the maxsize limit (#{@maxsize} bytes)." }
         return true
       end
       if !@maxtime.nil? && (Time.now - @start_time) > @maxtime
-        Logger.log_internal { "Rolling because #{@filename} (created: #{@start_time}) has exceded the maxtime age (#{@maxtime} seconds)." }
+        Logger.log_internal { "Rolling because #{@real_log_filename} (created: #{@start_time}) has exceded the maxtime age (#{@maxtime} seconds)." }
         return true
       end
       false
@@ -182,9 +212,16 @@ module Log4r
         #if ( @baseFilename != @filename ) then
           @out.close
         #end
+          
+          unless @log4r_rolling_policy                             
+            # make way for the rename  
+            File.delete(@filename) if File.exists?(@filename)
+            # archive last logfile
+            File.rename(@real_log_filename, @filename) if File.exists?(@real_log_filename)
+          end
       rescue 
         Logger.log_internal {
-          "RollingFileOutputter '#{@name}' could not close #{@filename}"
+          "RollingFileOutputter '#{@name}' could not close #{@real_log_filename} message=#{$!.message}"
         }
       end
 
@@ -213,9 +250,12 @@ if __FILE__ == $0
   require 'log4r'
   include Log4r
 
+  dLog = Logger.new 'log4r'
+  dLog.outputters = StdoutOutputter.new("log4r")
+  dLog.level = DEBUG
 
   timeLog = Logger.new 'WbExplorer'
-  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "TestTime.log", "maxtime" => 10, "trunc" => true })
+  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestTime.log", "maxtime" => 10, "trunc" => true })
   timeLog.level = DEBUG
 
   100.times { |t|
@@ -223,12 +263,30 @@ if __FILE__ == $0
     sleep(1.0)
   }
 
+  timeLog = Logger.new 'WbExplorer'
+  timeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestRolling.log", "maxtime" => 10, "trunc" => true, "max_backups" => 9, "log4r_rolling_policy" => false })
+  timeLog.level = DEBUG
+
+  100.times { |t|
+    timeLog.info "rolling  #{t}"
+    sleep(1.0)
+  }
+
   sizeLog = Logger.new 'WbExplorer'
-  sizeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "TestSize.log", "maxsize" => 16000, "trunc" => true })
+  sizeLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestSize.log", "maxsize" => 16000, "trunc" => true })
   sizeLog.level = DEBUG
 
-  10000.times { |t|
+  1000.times { |t|
     sizeLog.info "blah #{t}"
   }
+
+  rollLog = Logger.new 'WbExplorer'
+  rollLog.outputters = RollingFileOutputter.new("WbExplorer", { "filename" => "junk/TestRoll.log", "maxsize" => 1024, "trunc" => true, "max_backups" => 9, "log4r_rolling_policy" => false })
+  rollLog.level = DEBUG
+
+  1000.times { |t|
+    rollLog.info "rolling #{t}"
+  }
+
 
 end
