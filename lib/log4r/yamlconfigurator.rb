@@ -10,6 +10,7 @@ require "log4r/logserver"
 require "log4r/outputter/remoteoutputter"
 
 require 'yaml'
+require 'erb'
 
 module Log4r
   # Gets raised when Configurator encounters bad YAML.
@@ -39,7 +40,7 @@ module Log4r
 
     # Given a filename, loads the YAML configuration for Log4r.
     def self.load_yaml_file( filename)
-      actual_load( File.open( filename))
+      actual_load( IO.read(filename))
     end
 
     # You can load a String YAML configuration instead of a file.
@@ -52,10 +53,7 @@ module Log4r
     #######
 
     def self.actual_load( yaml_docs)
-      log4r_config = nil
-      YAML.load_documents( yaml_docs){ |doc|
-        doc.has_key?( 'log4r_config') and log4r_config = doc['log4r_config'] and break
-      }
+      log4r_config=YAML.load(ERB.new(yaml_docs).result)['log4r_config']
       if log4r_config.nil?
         raise ConfigError, 
         "Key 'log4r_config:' not defined in yaml documents", caller[1..-1]
