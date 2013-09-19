@@ -145,6 +145,12 @@ module Log4r
     def ==(other)
       return true if self.object_id == other.object_id
     end
+    
+    def formatter
+      proc do |severity, time, progname, msg|
+        msg
+      end
+    end
   end
 
 
